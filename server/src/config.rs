@@ -5,11 +5,13 @@ use std::{
 	path::PathBuf,
 };
 
+use anyhow::Context;
 use cfg_if::cfg_if;
 use clap::{Parser, ValueEnum};
 use lazy_static::lazy_static;
 use log::LevelFilter;
 use regex::RegexSet;
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use wisp_mux::{
 	extensions::{
@@ -22,7 +24,10 @@ use wisp_mux::{
 	WispV2Handshake,
 };
 
-use crate::{handle::wisp::utils::get_certificates_from_paths, CLI, CONFIG, RESOLVER};
+use crate::{
+	handle::wisp::utils::get_certificates_from_paths, puter::PuterPasswordProtocolExtensionBuilder,
+	CLI, CONFIG, RESOLVER,
+};
 
 pub const VERSION_STRING: &str = concat!(
 	"git ",
@@ -201,6 +206,9 @@ pub struct WispConfig {
 	#[serde(skip_serializing_if = "is_default_motd")]
 	/// Wisp version 2 MOTD extension message.
 	pub motd_extension: String,
+
+	/// PUTER: Auth server verify endpoint.
+	pub puter_auth_server: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -391,6 +399,8 @@ impl Default for WispConfig {
 			certificate_extension_required: true,
 
 			motd_extension: default_motd(),
+
+			puter_auth_server: None,
 		}
 	}
 }
@@ -417,6 +427,17 @@ impl WispConfig {
 				extensions.push(AnyProtocolExtensionBuilder::new(
 					MotdProtocolExtensionBuilder::Server(self.motd_extension.clone()),
 				));
+			}
+
+			if let Some(auth_server) = self.puter_auth_server.as_deref() {
+				extensions.push(AnyProtocolExtensionBuilder::new(
+					PuterPasswordProtocolExtensionBuilder::new_server(
+						auth_server
+							.try_into()
+							.context("failed to parse puter auth server")?,
+						true,
+					),
+				))
 			}
 
 			match self.auth_extension {
