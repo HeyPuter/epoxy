@@ -17,6 +17,7 @@ use hickory_resolver::{
 use lazy_static::lazy_static;
 use listener::ServerListener;
 use log::{debug, error, info, trace, warn};
+use reqwest::Client as ReqwestClient;
 use route::{route_stats, ServerRouteResult};
 use stats::generate_stats;
 use tokio::{
@@ -32,6 +33,8 @@ pub mod config;
 mod handle;
 #[doc(hidden)]
 mod listener;
+#[doc(hidden)]
+mod puter;
 #[doc(hidden)]
 mod route;
 #[doc(hidden)]
@@ -123,6 +126,10 @@ lazy_static! {
 				.unwrap()
 			)
 		}
+	};
+	#[doc(hidden)]
+	pub static ref REQWEST_CLIENT: ReqwestClient = {
+		ReqwestClient::new()
 	};
 }
 
