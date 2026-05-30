@@ -123,6 +123,7 @@ impl ProtocolExtension for PuterPasswordProtocolExtension {
 				let mut out = BytesMut::with_capacity(1 + 2 + user.len() + password.len());
 				out.put_u8(user.len().try_into().unwrap());
 				out.extend_from_slice(user.as_bytes());
+				out.put_u16(password.len().try_into().unwrap());
 				out.extend_from_slice(password.as_bytes());
 				out.freeze()
 			}
@@ -241,7 +242,8 @@ impl ProtocolExtensionBuilder for PuterPasswordProtocolExtensionBuilder {
 
 				let endpoint = endpoint.clone();
 				let user = std::str::from_utf8(&bytes.split_to(user_len as usize))?.to_string();
-				let password = std::str::from_utf8(&bytes)?.to_string();
+				let pw_len = bytes.get_u16_le();
+				let password = std::str::from_utf8(&bytes.split_to(pw_len as usize))?.to_string();
 
 				*self = Self::ServerAfterClientInfo {
 					endpoint: endpoint.clone(),
