@@ -9,7 +9,9 @@ name: build-image
 
 on:
   push:
-    branches: [master]
+    # TODO: drop NS/container-test before merging — it's here only so the
+    # workflow runs on this feature branch for testing.
+    branches: [master, NS/container-test]
     tags: ["v*"]
   workflow_dispatch:
 
