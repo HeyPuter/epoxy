@@ -1,0 +1,80 @@
+name: build-image
+
+# Build the epoxy-server container image (server/Dockerfile) for linux/arm64
+# and publish it to GHCR. Consumed by the Puter wisp relay nodes
+# (oci-wisp-terraform), which pull ghcr.io/<owner>/epoxy-server by tag.
+#
+# Auth is the built-in GITHUB_TOKEN (packages: write) — no extra secrets.
+# Make the resulting package PUBLIC (once) so nodes can pull anonymously.
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: build-image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # Native arm64 host builds the aarch64 image directly (no QEMU).
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # server/build.rs (vergen-git2) embeds the commit SHA
+
+      - name: Compute image refs
+        id: meta
+        run: |
+          owner="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          image="ghcr.io/${owner}/epoxy-server"
+          sha="$(git rev-parse --short HEAD)"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          # Primary tag: git tag if this is a tag push, else the short SHA.
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${sha}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build image (arm64)
+        run: |
+          docker buildx build \
+            --platform linux/arm64 \
+            -f server/Dockerfile \
+            -t "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}" \
+            --load .
+
+      - name: Guard — no twisp
+        # The image is built with default features (= "toml"); twisp is not a
+        # default feature. This is a hard backstop: the serde field "allow_twisp"
+        # only exists when the twisp feature is compiled in, and survives the
+        # image's symbol strip. (Drop this step if you ever publish a
+        # twisp-enabled variant from this repo.)
+        run: |
+          cid="$(docker create "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}")"
+          docker cp "$cid:/usr/local/bin/epoxy-server" /tmp/epoxy-server
+          docker rm -f "$cid" >/dev/null
+          if strings /tmp/epoxy-server | grep -qi 'allow_twisp\|pty-process'; then
+            echo "ERROR: built binary appears to contain twisp support — aborting." >&2
+            exit 1
+          fi
+          echo "twisp guard: clean"
+
+      - name: Push to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}"
+          # On master, also move :latest.
+          if [[ "${GITHUB_REF}" == "refs/heads/master" ]]; then
+            docker tag "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}" "${{ steps.meta.outputs.image }}:latest"
+            docker push "${{ steps.meta.outputs.image }}:latest"
+          fi
+          echo "Pushed ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}"
