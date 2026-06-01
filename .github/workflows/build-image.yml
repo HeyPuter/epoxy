@@ -1,0 +1,67 @@
+name: build-image
+
+# Build the epoxy-server container image (server/Dockerfile) for linux/arm64
+# and publish it to GHCR. Consumed by the Puter wisp relay nodes
+# (oci-wisp-terraform), which pull ghcr.io/<owner>/epoxy-server by tag.
+#
+# Auth is the built-in GITHUB_TOKEN (packages: write) — no extra secrets.
+# Make the resulting package PUBLIC (once) so nodes can pull anonymously.
+
+on:
+  push:
+    # TODO: drop NS/container-test before merging — it's here only so the
+    # workflow runs on this feature branch for testing.
+    branches: [master, NS/container-test]
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: build-image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # Native arm64 host builds the aarch64 image directly (no QEMU).
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # server/build.rs (vergen-git2) embeds the commit SHA
+
+      - name: Compute image refs
+        id: meta
+        run: |
+          owner="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          image="ghcr.io/${owner}/epoxy-server"
+          sha="$(git rev-parse --short HEAD)"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          # Primary tag: git tag if this is a tag push, else the short SHA.
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${sha}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build + push (arm64)
+        # Default features only (= "toml"); twisp is not a default feature, so
+        # it is never compiled into the published image.
+        run: |
+          image="${{ steps.meta.outputs.image }}"
+          tags=(-t "${image}:${{ steps.meta.outputs.tag }}")
+          # On master, also move :latest.
+          if [[ "${GITHUB_REF}" == "refs/heads/master" ]]; then
+            tags+=(-t "${image}:latest")
+          fi
+          docker buildx build \
+            --platform linux/arm64 \
+            -f server/Dockerfile \
+            "${tags[@]}" \
+            --push .
+          echo "Pushed ${image}:${{ steps.meta.outputs.tag }}"
