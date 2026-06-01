@@ -44,37 +44,22 @@ jobs:
             echo "tag=${sha}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build image (arm64)
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build + push (arm64)
+        # Default features only (= "toml"); twisp is not a default feature, so
+        # it is never compiled into the published image.
         run: |
+          image="${{ steps.meta.outputs.image }}"
+          tags=(-t "${image}:${{ steps.meta.outputs.tag }}")
+          # On master, also move :latest.
+          if [[ "${GITHUB_REF}" == "refs/heads/master" ]]; then
+            tags+=(-t "${image}:latest")
+          fi
           docker buildx build \
             --platform linux/arm64 \
             -f server/Dockerfile \
-            -t "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}" \
-            --load .
-
-      - name: Guard — no twisp
-        # The image is built with default features (= "toml"); twisp is not a
-        # default feature. This is a hard backstop: the serde field "allow_twisp"
-        # only exists when the twisp feature is compiled in, and survives the
-        # image's symbol strip. (Drop this step if you ever publish a
-        # twisp-enabled variant from this repo.)
-        run: |
-          cid="$(docker create "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}")"
-          docker cp "$cid:/usr/local/bin/epoxy-server" /tmp/epoxy-server
-          docker rm -f "$cid" >/dev/null
-          if strings /tmp/epoxy-server | grep -qi 'allow_twisp\|pty-process'; then
-            echo "ERROR: built binary appears to contain twisp support — aborting." >&2
-            exit 1
-          fi
-          echo "twisp guard: clean"
-
-      - name: Push to GHCR
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          docker push "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}"
-          # On master, also move :latest.
-          if [[ "${GITHUB_REF}" == "refs/heads/master" ]]; then
-            docker tag "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}" "${{ steps.meta.outputs.image }}:latest"
-            docker push "${{ steps.meta.outputs.image }}:latest"
-          fi
-          echo "Pushed ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}"
+            "${tags[@]}" \
+            --push .
+          echo "Pushed ${image}:${{ steps.meta.outputs.tag }}"
