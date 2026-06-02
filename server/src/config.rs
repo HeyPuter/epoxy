@@ -25,8 +25,7 @@ use wisp_mux::{
 };
 
 use crate::{
-	handle::wisp::utils::get_certificates_from_paths, puter::PuterPasswordProtocolExtensionBuilder,
-	CLI, CONFIG, RESOLVER,
+	CLI, CONFIG, RESOLVER, handle::wisp::utils::get_certificates_from_paths, puter::{PuterPasswordProtocolExtension, PuterPasswordProtocolExtensionBuilder}
 };
 
 pub const VERSION_STRING: &str = concat!(
@@ -293,6 +292,8 @@ struct ConfigCache {
 	pub blocked_udp_hosts: RegexSet,
 
 	pub socks5_server: Option<SocketAddr>,
+
+	pub puter_auth_server: Option<Url>,
 }
 
 lazy_static! {
@@ -322,6 +323,8 @@ lazy_static! {
 			blocked_udp_hosts: RegexSet::new(&CONFIG.stream.block_udp_hosts).unwrap(),
 
 			socks5_server: CONFIG.stream.socks5_server.as_ref().map(|x| x.to_socket_addrs().expect("failed to resolve socks5 server").next().expect("failed to resolve socks5 server")),
+
+			puter_auth_server: CONFIG.wisp.puter_auth_server.as_ref().map(|x| Url::parse(x).expect("failed to parse puter auth server")),
 		}
 	};
 }
@@ -412,6 +415,11 @@ impl WispConfig {
 	}
 
 	#[doc(hidden)]
+	pub fn puter_auth_server(&self) -> Option<&Url> {
+		CONFIG_CACHE.puter_auth_server.as_ref()
+	}
+
+	#[doc(hidden)]
 	pub async fn to_opts(&self) -> anyhow::Result<(Option<WispV2Handshake>, u32)> {
 		if self.wisp_v2 {
 			let mut extensions: Vec<AnyProtocolExtensionBuilder> = Vec::new();
@@ -437,7 +445,8 @@ impl WispConfig {
 							.context("failed to parse puter auth server")?,
 						true,
 					),
-				))
+				));
+				required_extensions.push(PuterPasswordProtocolExtension::ID);
 			}
 
 			match self.auth_extension {

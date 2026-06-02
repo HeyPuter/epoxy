@@ -14,6 +14,36 @@ use wisp_mux::{
 
 use crate::REQWEST_CLIENT;
 
+#[derive(Serialize)]
+struct AuthRequest {
+	token: String,
+}
+#[derive(Deserialize)]
+struct AuthResponse {
+	#[serde(default)]
+	allow: bool,
+}
+
+pub async fn verify_relay_token(endpoint: &Url, token: &str) -> anyhow::Result<bool> {
+	let origin = endpoint.origin().ascii_serialization();
+
+	let res = REQWEST_CLIENT
+		.request(Method::POST, endpoint.clone())
+		.header("Content-Type", "application/json")
+		.header("Origin", origin)
+		.json(&AuthRequest {
+			token: token.to_string(),
+		})
+		.send()
+		.await
+		.context("failed to ask auth server for auth")?
+		.json::<AuthResponse>()
+		.await
+		.context("auth server gave invalid response")?;
+
+	Ok(res.allow)
+}
+
 /// ID of Puter password protocol extension.
 pub const PUTER_PASSWORD_PROTOCOL_EXTENSION_ID: u8 = 0x02;
 
@@ -55,15 +85,6 @@ impl PuterPasswordProtocolExtension {
 	pub const ID: u8 = PUTER_PASSWORD_PROTOCOL_EXTENSION_ID;
 }
 
-#[derive(Serialize)]
-struct AuthRequest {
-	token: String,
-}
-#[derive(Deserialize)]
-struct AuthResponse {
-	allow: bool,
-}
-
 #[async_trait]
 impl ProtocolExtension for PuterPasswordProtocolExtension {
 	fn get_id(&self) -> u8 {
@@ -81,26 +102,12 @@ impl ProtocolExtension for PuterPasswordProtocolExtension {
 				chosen_password,
 				..
 			} => {
-				let origin = endpoint.origin().ascii_serialization();
-
-				let res = REQWEST_CLIENT
-					.request(Method::POST, endpoint.clone())
-					.header("Content-Type", "application/json")
-					.header("Origin", origin)
-					.json(&AuthRequest {
-						token: chosen_password.clone(),
-					})
-					.send()
+				if verify_relay_token(endpoint, &chosen_password)
 					.await
-					.context("failed to ask auth server for auth")
+					.context("failed to verify relay token")
 					.map_err(|x| WispError::ExtensionImplError(x.into()))?
-					.json::<AuthResponse>()
-					.await
-					.context("auth server gave invalid response")
-					.map_err(|x| WispError::ExtensionImplError(x.into()))?;
-
-				if res.allow {
-                    Ok(None)
+				{
+					Ok(None)
 				} else {
 					Ok(Some((
 						CloseReason::ExtensionsPasswordAuthFailed,
