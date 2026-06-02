@@ -20,6 +20,7 @@ use crate::{
 	config::SocketTransport,
 	generate_stats,
 	listener::{ServerStream, ServerStreamExt, ServerStreamRead, ServerStreamWrite},
+	puter::verify_relay_token,
 	stream::WebSocketStreamWrapper,
 	upgrade::{is_upgrade_request, upgrade},
 	util_chain::{chain, Chain},
@@ -140,7 +141,31 @@ where
 	};
 
 	let ws_protocol = headers.get(SEC_WEBSOCKET_PROTOCOL);
-	let req_path = req.uri().path().to_string();
+	let mut req_path = req.uri().path().to_string();
+
+	if let Some(server) = CONFIG.wisp.puter_auth_server() {
+		let endpoint = CONFIG.wisp.prefix.clone() + "/";
+		if req_path != endpoint {
+			let trimmed = req_path.strip_prefix("/").unwrap_or(&req_path);
+
+			let Some(token_loc) = trimmed.find('/') else {
+				debug!("sent non_ws_response to http client [no token found]");
+				return non_ws_resp();
+			};
+
+			if !verify_relay_token(server, &trimmed[..token_loc])
+				.await
+				.context("failed to verify relay token")?
+			{
+				debug!("sent non_ws_response to http client [token invalid]");
+				return Ok(Response::builder()
+					.status(StatusCode::UNAUTHORIZED)
+					.body(Body::new(CONFIG.server.non_ws_response.as_bytes().into()))?);
+			}
+
+			req_path = trimmed[token_loc..].to_string();
+		}
+	}
 
 	if req_path.ends_with(&(CONFIG.wisp.prefix.clone() + "/")) {
 		let has_ws_protocol = ws_protocol.is_some();
