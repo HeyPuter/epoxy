@@ -102,7 +102,7 @@ impl ProtocolExtension for PuterPasswordProtocolExtension {
 				chosen_password,
 				..
 			} => {
-				if verify_relay_token(endpoint, &chosen_password)
+				if verify_relay_token(endpoint, chosen_password)
 					.await
 					.context("failed to verify relay token")
 					.map_err(|x| WispError::ExtensionImplError(x.into()))?
@@ -129,8 +129,8 @@ impl ProtocolExtension for PuterPasswordProtocolExtension {
 			Self::ClientAfterServerInfo { user, password } => {
 				let mut out = BytesMut::with_capacity(1 + 2 + user.len() + password.len());
 				out.put_u8(user.len().try_into().unwrap());
+				out.put_u16_le(password.len().try_into().unwrap());
 				out.extend_from_slice(user.as_bytes());
-				out.put_u16(password.len().try_into().unwrap());
 				out.extend_from_slice(password.as_bytes());
 				out.freeze()
 			}
@@ -245,12 +245,28 @@ impl ProtocolExtensionBuilder for PuterPasswordProtocolExtensionBuilder {
 	) -> Result<AnyProtocolExtension, WispError> {
 		match self {
 			Self::ServerBeforeClientInfo { endpoint, required } => {
-				let user_len = bytes.get_u8();
+				// The payload is entirely client controlled, and `Buf` panics rather than
+				// erroring on a short read. `panic = "abort"` means a panic here takes the
+				// whole server down, not just this connection, so every read is checked.
+				if bytes.remaining() < size_of::<u8>() + size_of::<u16>() {
+					return Err(WispError::PacketTooSmall);
+				}
+
+				let user_len = bytes.get_u8() as usize;
 
 				let endpoint = endpoint.clone();
-				let user = std::str::from_utf8(&bytes.split_to(user_len as usize))?.to_string();
-				let pw_len = bytes.get_u16_le();
-				let password = std::str::from_utf8(&bytes.split_to(pw_len as usize))?.to_string();
+				let pw_len = bytes.get_u16_le() as usize;
+
+				// Both lengths are read before either string, so check them together: a
+				// spec-conforming client sends no password length at all (the password
+				// fills the rest of the payload), and its first two password bytes land
+				// here as a bogus `pw_len`.
+				if bytes.remaining() < user_len + pw_len {
+					return Err(WispError::PacketTooSmall);
+				}
+
+				let user = std::str::from_utf8(&bytes.split_to(user_len))?.to_string();
+				let password = std::str::from_utf8(&bytes.split_to(pw_len))?.to_string();
 
 				*self = Self::ServerAfterClientInfo {
 					endpoint: endpoint.clone(),
@@ -258,13 +274,17 @@ impl ProtocolExtensionBuilder for PuterPasswordProtocolExtensionBuilder {
 				};
 
 				Ok(PuterPasswordProtocolExtension::ServerAfterClientInfo {
-					endpoint: endpoint,
+					endpoint,
 					chosen_user: user,
 					chosen_password: password,
 				}
 				.into())
 			}
 			Self::ClientBeforeServerInfo { creds } => {
+				if bytes.remaining() < size_of::<u8>() {
+					return Err(WispError::PacketTooSmall);
+				}
+
 				let required = bytes.get_u8() != 0;
 
 				*self = Self::ClientAfterServerInfo {

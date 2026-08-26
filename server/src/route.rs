@@ -42,6 +42,7 @@ pub enum ServerRouteResult {
 	Wisp {
 		stream: WispResult,
 		has_ws_protocol: bool,
+		is_authed: bool,
 	},
 	Wispnet {
 		stream: WispResult,
@@ -98,6 +99,7 @@ enum HttpUpgradeResult {
 	Wisp {
 		has_ws_protocol: bool,
 		is_wispnet: bool,
+		is_authed: bool,
 	},
 	WsProxy {
 		path: String,
@@ -143,6 +145,7 @@ where
 	let ws_protocol = headers.get(SEC_WEBSOCKET_PROTOCOL);
 	let mut req_path = req.uri().path().to_string();
 
+	let mut is_authed = false;
 	if let Some(server) = CONFIG.wisp.puter_auth_server() {
 		let endpoint = CONFIG.wisp.prefix.clone() + "/";
 		if req_path != endpoint {
@@ -164,6 +167,7 @@ where
 			}
 
 			req_path = trimmed[token_loc..].to_string();
+			is_authed = true;
 		}
 	}
 
@@ -177,6 +181,7 @@ where
 				HttpUpgradeResult::Wisp {
 					has_ws_protocol,
 					is_wispnet,
+					is_authed,
 				},
 				ip_header,
 			)
@@ -246,6 +251,7 @@ pub async fn route(
 									HttpUpgradeResult::Wisp {
 										has_ws_protocol,
 										is_wispnet,
+										is_authed,
 									} => {
 										let ws = ws.downcast::<TokioIo<ServerStream>>().unwrap();
 										let ws =
@@ -267,6 +273,7 @@ pub async fn route(
 											ServerRouteResult::Wisp {
 												stream: (Either::Left(read), Either::Left(write)),
 												has_ws_protocol,
+												is_authed,
 											}
 										};
 
@@ -312,6 +319,7 @@ pub async fn route(
 				ServerRouteResult::Wisp {
 					stream: (Either::Right(read), Either::Right(write)),
 					has_ws_protocol: true,
+					is_authed: false,
 				},
 				None,
 			);
