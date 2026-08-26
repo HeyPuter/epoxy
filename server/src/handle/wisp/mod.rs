@@ -326,16 +326,20 @@ async fn handle_stream(
 	}
 }
 
-pub async fn handle_wisp(stream: WispResult, is_v2: bool, id: String) -> anyhow::Result<()> {
+pub async fn handle_wisp(stream: WispResult, is_v2: bool, is_authed: bool, id: String) -> anyhow::Result<()> {
+	if CONFIG.wisp.puter_auth_server().is_some() && !is_authed && !is_v2 {
+		bail!("unauthed v1 connection");
+	}
+
 	let (read, write) = stream;
 	cfg_if! {
 		if #[cfg(feature = "twisp")] {
 			let twisp_map = twisp::new_map();
-			let (extensions, buffer_size) = CONFIG.wisp.to_opts().await?;
+			let (extensions, buffer_size) = CONFIG.wisp.to_opts(is_authed).await?;
 
 			let extensions = extensions.map(|x| x.with_extension(twisp::new_ext(twisp_map.clone())));
 		} else {
-			let (extensions, buffer_size) = CONFIG.wisp.to_opts().await?;
+			let (extensions, buffer_size) = CONFIG.wisp.to_opts(is_authed).await?;
 		}
 	}
 

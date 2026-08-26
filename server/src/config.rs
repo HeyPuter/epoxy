@@ -25,7 +25,9 @@ use wisp_mux::{
 };
 
 use crate::{
-	CLI, CONFIG, RESOLVER, handle::wisp::utils::get_certificates_from_paths, puter::{PuterPasswordProtocolExtension, PuterPasswordProtocolExtensionBuilder}
+	handle::wisp::utils::get_certificates_from_paths,
+	puter::{PuterPasswordProtocolExtension, PuterPasswordProtocolExtensionBuilder},
+	CLI, CONFIG, RESOLVER,
 };
 
 pub const VERSION_STRING: &str = concat!(
@@ -334,7 +336,7 @@ pub async fn validate_config_cache() {
 	// constructs regexes
 	let _ = CONFIG_CACHE.allowed_ports;
 	// validates wisp config
-	CONFIG.wisp.to_opts().await.unwrap();
+	CONFIG.wisp.to_opts(false).await.unwrap();
 	// constructs resolver
 	RESOLVER.clear_cache();
 }
@@ -420,7 +422,7 @@ impl WispConfig {
 	}
 
 	#[doc(hidden)]
-	pub async fn to_opts(&self) -> anyhow::Result<(Option<WispV2Handshake>, u32)> {
+	pub async fn to_opts(&self, authed: bool) -> anyhow::Result<(Option<WispV2Handshake>, u32)> {
 		if self.wisp_v2 {
 			let mut extensions: Vec<AnyProtocolExtensionBuilder> = Vec::new();
 			let mut required_extensions: Vec<u8> = Vec::new();
@@ -437,16 +439,18 @@ impl WispConfig {
 				));
 			}
 
-			if let Some(auth_server) = self.puter_auth_server.as_deref() {
-				extensions.push(AnyProtocolExtensionBuilder::new(
-					PuterPasswordProtocolExtensionBuilder::new_server(
-						auth_server
-							.try_into()
-							.context("failed to parse puter auth server")?,
-						true,
-					),
-				));
-				required_extensions.push(PuterPasswordProtocolExtension::ID);
+			if !authed {
+				if let Some(auth_server) = self.puter_auth_server.as_deref() {
+					extensions.push(AnyProtocolExtensionBuilder::new(
+						PuterPasswordProtocolExtensionBuilder::new_server(
+							auth_server
+								.try_into()
+								.context("failed to parse puter auth server")?,
+							true,
+						),
+					));
+					required_extensions.push(PuterPasswordProtocolExtension::ID);
+				}
 			}
 
 			match self.auth_extension {

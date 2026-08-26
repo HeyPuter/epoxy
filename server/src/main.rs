@@ -354,7 +354,8 @@ fn handle_stream(stream: ServerRouteResult, id: String) {
 			ServerRouteResult::Wisp {
 				stream,
 				has_ws_protocol,
-			} => Box::pin(handle_wisp(stream, has_ws_protocol, id.clone())).await,
+				is_authed,
+			} => Box::pin(handle_wisp(stream, has_ws_protocol, is_authed, id.clone())).await,
 			ServerRouteResult::Wispnet { stream } => {
 				Box::pin(handle_wispnet(stream, id.clone())).await
 			}
