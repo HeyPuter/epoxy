@@ -172,7 +172,7 @@ where
 	}
 
 	if req_path.ends_with(&(CONFIG.wisp.prefix.clone() + "/")) {
-		let has_ws_protocol = ws_protocol.is_some();
+		let has_ws_protocol = ws_protocol.is_some() || (!is_authed && !CONFIG.wisp.puter_auth_server().is_none());
 		let is_wispnet =
 			CONFIG.wisp.has_wispnet() && req.uri().query().unwrap_or_default() == "net";
 		tokio::spawn(async move {
