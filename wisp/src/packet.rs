@@ -289,11 +289,11 @@ impl InfoPacket {
 		while packet.remaining() >= (size_of::<u8>() + size_of::<u32>()) {
 			// We have some extensions
 			let id = packet.get_u8();
-			let length = usize::try_from(packet.get_u32_le())?;
-
-			if packet.remaining() < length {
-				return Err(WispError::PacketTooSmall);
-			}
+			// Older puter.js clients hand-roll their INFO packet and overstate the length of
+			// the (only) extension by 2 bytes, so clamp an overlong extension to the rest of
+			// the packet instead of failing the handshake. This can't hand a builder anything
+			// a correctly framed packet couldn't already.
+			let length = usize::try_from(packet.get_u32_le())?.min(packet.remaining());
 
 			if let Some(builder) = builders.iter_mut().find(|x| x.get_id() == id) {
 				extensions.push(builder.build_from_bytes(packet.split_to(length), role)?);
