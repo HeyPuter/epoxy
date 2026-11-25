@@ -1,0 +1,70 @@
+name: Notify HeyPuter (relay)
+
+# Asks HeyPuter's private deployment to roll out a published epoxy-server
+# image. The only thing this run chooses is the image tag.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag (default: short SHA of the ref this runs on)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  authorize:
+    if: github.repository == 'HeyPuter/epoxy'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require maintain or admin
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.triggering_actor }}
+        run: |
+          ROLE=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$ACTOR/permission" --jq .role_name)
+          if [ "$ROLE" != "maintain" ] && [ "$ROLE" != "admin" ]; then
+            echo "::error::$ACTOR has role '$ROLE'; maintain or admin required"
+            exit 1
+          fi
+
+  notify:
+    needs: authorize
+    runs-on: ubuntu-latest
+    # Holds HEYPUTER_DISPATCH_TOKEN; limited to master so branch copies of this file can't read it.
+    environment: heyputer-dispatch
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # same short SHA length as build-image
+
+      - name: Request rollout
+        env:
+          TAG_INPUT: ${{ inputs.image_tag }}
+          TOKEN: ${{ secrets.HEYPUTER_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$TOKEN" ]; then
+            echo "::error::HEYPUTER_DISPATCH_TOKEN is not set in the heyputer-dispatch environment"
+            exit 1
+          fi
+          tag="${TAG_INPUT:-$(git rev-parse --short HEAD)}"
+          if ! [[ "$tag" =~ ^[A-Za-z0-9_.-]{1,128}$ ]]; then
+            echo "::error::Invalid image tag"
+            exit 1
+          fi
+          owner="$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          if ! docker buildx imagetools inspect "ghcr.io/${owner}/epoxy-server:${tag}" >/dev/null; then
+            echo "::error::No image tagged ${tag}. Has build-image finished for this commit?"
+            exit 1
+          fi
+          jq -nc --arg tag "$tag" \
+            '{event_type: "epoxy-server-requested", client_payload: {image_tag: $tag}}' |
+          curl -fsS -X POST \
+            -H "Authorization: token $TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/HeyPuter/heyputer/dispatches \
+            -d @-
+          echo "Requested \`${tag}\`" >> "$GITHUB_STEP_SUMMARY"
